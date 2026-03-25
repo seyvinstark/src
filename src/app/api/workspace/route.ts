@@ -5,8 +5,12 @@ import { parseAppState } from "@/lib/parseAppState";
 const REDIS_KEY = "timetable_shared_workspace_v1";
 
 function getRedis(): Redis | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const url =
+    process.env.UPSTASH_REDIS_REST_URL ??
+    process.env.timetable_shared_workspace_v1_KV_REST_API_URL;
+  const token =
+    process.env.UPSTASH_REDIS_REST_TOKEN ??
+    process.env.timetable_shared_workspace_v1_KV_REST_API_TOKEN;
   if (!url || !token) return null;
   return new Redis({ url, token });
 }
@@ -37,7 +41,7 @@ export async function PUT(request: Request) {
   const redis = getRedis();
   if (!redis) {
     return NextResponse.json(
-      { error: "Workspace sync is not configured (missing Upstash env vars)." },
+      { error: "Workspace sync is not configured (missing Redis env vars)." },
       { status: 501 },
     );
   }
