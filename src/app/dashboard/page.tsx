@@ -11,8 +11,8 @@ import { currentSlotIdForDay, todayAsDay } from "@/utils/time";
 export default function DashboardPage() {
   const { state } = useAppState();
   const conflicts = listConflicts(state);
-  const [now, setNow] = useState(() => new Date());
-  const [day, setDay] = useState<Day>(() => todayAsDay());
+  const [now, setNow] = useState<Date>(() => new Date());
+  const [day, setDay] = useState<Day>(() => todayAsDay(new Date()));
 
   const missingAllocations = state.mappings.filter((m) => {
     const assigned = state.entries.filter(
@@ -25,29 +25,31 @@ export default function DashboardPage() {
   }).length;
 
   useEffect(() => {
-    const t = window.setInterval(() => setNow(new Date()), 30_000);
-    return () => window.clearInterval(t);
+    const id = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(id);
   }, []);
+
+  const effectiveDay: Day = day;
 
   const daySlots = useMemo(() => {
     return state.timeSlots
-      .filter((s) => s.day === day)
+      .filter((s) => s.day === effectiveDay)
       .slice()
       .sort((a, b) => a.start.localeCompare(b.start));
-  }, [state.timeSlots, day]);
+  }, [state.timeSlots, effectiveDay]);
 
   const currentSlotId = useMemo(() => {
-    return currentSlotIdForDay(state.timeSlots, day, now);
-  }, [state.timeSlots, day, now]);
+    return currentSlotIdForDay(state.timeSlots, effectiveDay, now);
+  }, [state.timeSlots, effectiveDay, now]);
 
   const entryForTeacherSlot = (teacherId: string, slotId: string) =>
     state.entries.find(
-      (e) => e.teacherId === teacherId && e.day === day && e.slotId === slotId,
+      (e) => e.teacherId === teacherId && e.day === effectiveDay && e.slotId === slotId,
     );
 
   const entryForGradeSlot = (gradeId: string, slotId: string) =>
     state.entries.find(
-      (e) => e.gradeId === gradeId && e.day === day && e.slotId === slotId,
+      (e) => e.gradeId === gradeId && e.day === effectiveDay && e.slotId === slotId,
     );
 
   const labelForSlot = (s: TimeSlot) => s.label ?? s.type;
@@ -75,7 +77,9 @@ export default function DashboardPage() {
           <div>
             <div className="text-sm font-semibold">Today calendar</div>
             <div className="text-xs text-zinc-600 mt-1">
-              Now: {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} • Day: {day}
+              Now:{" "}
+              {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}{" "}
+              • Day: {effectiveDay}
             </div>
           </div>
 
@@ -86,7 +90,7 @@ export default function DashboardPage() {
                 type="button"
                 onClick={() => setDay(d)}
                 className={`rounded-lg border px-3 py-2 text-sm ${
-                  d === day
+                  d === effectiveDay
                     ? "border-blue-500/30 bg-blue-50 text-blue-700"
                     : "border-zinc-200 bg-white hover:bg-zinc-50"
                 }`}

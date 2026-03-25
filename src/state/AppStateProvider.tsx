@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo, useReducer } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef } from "react";
 import type { AppState, AppAction } from "@/state/types";
 import { appReducer } from "@/state/reducer";
 import { loadState, saveState } from "@/state/storage";
@@ -14,12 +14,18 @@ type AppStateContextValue = {
 const AppStateContext = createContext<AppStateContextValue | null>(null);
 
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
-  const [state, dispatch] = useReducer(appReducer, undefined, () => {
-    const loaded = loadState();
-    return loaded ?? seedState();
-  });
+  // Keep initial server/client render identical, then hydrate from localStorage after mount.
+  const [state, dispatch] = useReducer(appReducer, undefined, () => seedState());
+  const didHydrateRef = useRef(false);
 
   useEffect(() => {
+    const loaded = loadState();
+    if (loaded) dispatch({ type: "state.import", state: loaded });
+    didHydrateRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!didHydrateRef.current) return;
     saveState(state);
   }, [state]);
 
