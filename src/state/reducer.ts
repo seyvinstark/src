@@ -1,4 +1,5 @@
 import type { AppAction, AppState } from "@/state/types";
+import { autoAllocateEmptySlots } from "@/domain/autoAllocate";
 import { applyPlacement, clearPlacement, deleteMappingAndEntries } from "@/domain/mutations";
 
 export function appReducer(state: AppState, action: AppAction): AppState {
@@ -59,6 +60,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case "entry.clear":
       return clearPlacement(state, { gradeId: action.gradeId, day: action.day, slotId: action.slotId });
+
+    case "allocation.auto":
+      return autoAllocateEmptySlots(state, { gradeId: action.gradeId }).state;
 
     case "state.import":
       return action.state;

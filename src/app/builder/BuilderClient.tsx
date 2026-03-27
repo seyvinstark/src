@@ -8,6 +8,7 @@ import { TimetableGrid } from "@/components/TimetableGrid";
 import type { Day, Entry, Id } from "@/state/types";
 import { getAssignedPeriodsForMapping } from "@/domain/selectors";
 import { validatePlacement } from "@/domain/validate";
+import { autoAllocateEmptySlots } from "@/domain/autoAllocate";
 import {
   DndContext,
   PointerSensor,
@@ -31,7 +32,9 @@ export default function BuilderClient() {
   });
   const [selectedMappingId, setSelectedMappingId] = useState<Id | null>(null); // still supported for click-to-place
   const [draggingMappingId, setDraggingMappingId] = useState<Id | null>(null);
+  const [draggingEntrySource, setDraggingEntrySource] = useState<{ day: Day; slotId: Id } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [messageTone, setMessageTone] = useState<"error" | "success">("error");
 
   const grade = state.grades.find((g) => g.id === activeGradeId);
 
@@ -50,6 +53,15 @@ export default function BuilderClient() {
     ? state.mappings.find((m) => m.id === selectedMappingId)
     : null;
 
+  const emptyClassSlotsForActiveGrade = useMemo(() => {
+    return state.timeSlots.filter((slot) => {
+      if (slot.type !== "class") return false;
+      return !state.entries.some(
+        (e) => e.gradeId === activeGradeId && e.day === slot.day && e.slotId === slot.id,
+      );
+    }).length;
+  }, [state, activeGradeId]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
@@ -64,7 +76,47 @@ export default function BuilderClient() {
     return { gradeId: parts[1], day: parts[2] as Day, slotId: parts[3] };
   };
 
+  const entryDraggableIdForCell = (args: { day: Day; slotId: Id }) =>
+    `entry:${activeGradeId}:${args.day}:${args.slotId}`;
+
+  const parseEntryId = (id: string) => {
+    const parts = id.split(":");
+    if (parts.length !== 4) return null;
+    if (parts[0] !== "entry") return null;
+    return { gradeId: parts[1], day: parts[2] as Day, slotId: parts[3] };
+  };
+
+  const movingEntry =
+    draggingEntrySource
+      ? state.entries.find(
+          (e) =>
+            e.gradeId === activeGradeId &&
+            e.day === draggingEntrySource.day &&
+            e.slotId === draggingEntrySource.slotId,
+        )
+      : null;
+
   const canDrop = (args: { day: Day; slotId: Id; slot: { type: string }; entry?: Entry }) => {
+    if (movingEntry) {
+      const stateWithoutSource = {
+        ...state,
+        entries: state.entries.filter(
+          (e) =>
+            !(
+              e.gradeId === activeGradeId &&
+              e.day === draggingEntrySource?.day &&
+              e.slotId === draggingEntrySource?.slotId
+            ),
+        ),
+      };
+      const targetEntry: Entry = {
+        ...movingEntry,
+        day: args.day,
+        slotId: args.slotId,
+      };
+      return validatePlacement(stateWithoutSource, targetEntry).ok;
+    }
+
     const mappingId = draggingMappingId ?? selectedMappingId;
     if (!mappingId) return false;
     const mapping = state.mappings.find((m) => m.id === mappingId);
@@ -82,6 +134,7 @@ export default function BuilderClient() {
   const place = (args: { day: Day; slotId: Id }) => {
     if (!selectedMapping) {
       setMessage("Select a course card first.");
+      setMessageTone("error");
       return;
     }
 
@@ -107,6 +160,7 @@ export default function BuilderClient() {
                 ? "Invalid: teacher weekly hours limit reached."
                 : "Invalid: placement blocked.",
       );
+      setMessageTone("error");
       return;
     }
 
@@ -116,19 +170,52 @@ export default function BuilderClient() {
 
   const onDragEnd = (evt: DragEndEvent) => {
     setDraggingMappingId(null);
+    setDraggingEntrySource(null);
     const activeId = String(evt.active.id);
     const overId = evt.over?.id ? String(evt.over.id) : null;
     if (!overId) return;
-
-    if (!activeId.startsWith("mapping:")) return;
-    const mappingId = activeId.slice("mapping:".length);
-    const mapping = state.mappings.find((m) => m.id === mappingId);
-    if (!mapping) return;
 
     const cell = parseCellId(overId);
     if (!cell) return;
     if (cell.gradeId !== activeGradeId) return;
 
+    if (activeId.startsWith("entry:")) {
+      const from = parseEntryId(activeId);
+      if (!from || from.gradeId !== activeGradeId) return;
+      const sourceEntry = state.entries.find(
+        (e) => e.gradeId === from.gradeId && e.day === from.day && e.slotId === from.slotId,
+      );
+      if (!sourceEntry) return;
+
+      const stateWithoutSource = {
+        ...state,
+        entries: state.entries.filter(
+          (e) => !(e.gradeId === from.gradeId && e.day === from.day && e.slotId === from.slotId),
+        ),
+      };
+      const targetEntry: Entry = {
+        ...sourceEntry,
+        day: cell.day,
+        slotId: cell.slotId,
+      };
+      const res = validatePlacement(stateWithoutSource, targetEntry);
+      if (!res.ok) {
+        setMessage("Invalid move: target slot violates timetable rules.");
+        setMessageTone("error");
+        return;
+      }
+
+      dispatch({ type: "entry.clear", gradeId: from.gradeId, day: from.day, slotId: from.slotId });
+      dispatch({ type: "entry.place", entry: targetEntry });
+      setMessage("Moved entry to new slot.");
+      setMessageTone("success");
+      return;
+    }
+
+    if (!activeId.startsWith("mapping:")) return;
+    const mappingId = activeId.slice("mapping:".length);
+    const mapping = state.mappings.find((m) => m.id === mappingId);
+    if (!mapping) return;
     const entry: Entry = {
       gradeId: activeGradeId,
       day: cell.day,
@@ -136,7 +223,6 @@ export default function BuilderClient() {
       subjectId: mapping.subjectId,
       teacherId: mapping.teacherId,
     };
-
     const res = validatePlacement(state, entry);
     if (!res.ok) {
       const reason = res.reasons[0];
@@ -151,16 +237,22 @@ export default function BuilderClient() {
                 ? "Invalid drop: teacher weekly hours limit reached."
                 : "Invalid drop.",
       );
+      setMessageTone("error");
       return;
     }
-
     dispatch({ type: "entry.place", entry });
     setMessage(null);
   };
 
-  const overlay = draggingMappingId
-    ? state.mappings.find((m) => m.id === draggingMappingId)
-    : null;
+  const onAutoAllocate = () => {
+    const { result } = autoAllocateEmptySlots(state, { gradeId: activeGradeId });
+    dispatch({ type: "allocation.auto", gradeId: activeGradeId });
+    setSelectedMappingId(null);
+    setMessageTone("success");
+    setMessage(`Auto-allocated ${result.placedCount} period(s). Remaining required: ${result.remainingRequiredPeriods}.`);
+  };
+
+  const overlay = draggingMappingId ? state.mappings.find((m) => m.id === draggingMappingId) : null;
 
   return (
     <div className="space-y-6">
@@ -191,9 +283,18 @@ export default function BuilderClient() {
         onDragStart={(e) => {
           const id = String(e.active.id);
           if (id.startsWith("mapping:")) setDraggingMappingId(id.slice("mapping:".length));
+          if (id.startsWith("entry:")) {
+            const parsed = parseEntryId(id);
+            if (parsed && parsed.gradeId === activeGradeId) {
+              setDraggingEntrySource({ day: parsed.day, slotId: parsed.slotId });
+            }
+          }
         }}
         onDragEnd={onDragEnd}
-        onDragCancel={() => setDraggingMappingId(null)}
+        onDragCancel={() => {
+          setDraggingMappingId(null);
+          setDraggingEntrySource(null);
+        }}
       >
         <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
           <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
@@ -212,7 +313,8 @@ export default function BuilderClient() {
                         disabled={full}
                         onClick={() => {
                           setSelectedMappingId(m.id);
-                          setMessage(null);
+                          setMessage(`Selected ${subjectName} (${teacherName}).`);
+                          setMessageTone("success");
                         }}
                         className={`w-full text-left rounded-xl border px-3 py-3 transition-colors disabled:opacity-50 ${
                           selected
@@ -254,10 +356,28 @@ export default function BuilderClient() {
             </div>
 
             <div className="mt-4 flex items-center gap-2">
-              <Button variant="secondary" onClick={() => setSelectedMappingId(null)}>
+              <Button
+                variant="secondary"
+                disabled={!selectedMappingId}
+                onClick={() => {
+                  setSelectedMappingId(null);
+                  setMessage("Course selection cleared.");
+                  setMessageTone("success");
+                }}
+              >
                 Clear selection
               </Button>
-              {message ? <div className="text-xs text-red-700">{message}</div> : null}
+              <Button
+                onClick={onAutoAllocate}
+                disabled={mappingsForGrade.length === 0 || emptyClassSlotsForActiveGrade === 0}
+              >
+                Auto Allocate
+              </Button>
+              {message ? (
+                <div className={`text-xs ${messageTone === "error" ? "text-red-700" : "text-green-700"}`}>
+                  {message}
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -267,6 +387,7 @@ export default function BuilderClient() {
               mode="grade-edit"
               gradeId={activeGradeId}
               droppableIdForCell={droppableIdForCell}
+              draggableEntryIdForCell={({ day, slotId }) => entryDraggableIdForCell({ day, slotId })}
               canDrop={canDrop}
               highlight={
                 jumpGradeId && jumpGradeId === activeGradeId && jumpDay && jumpSlotId
@@ -294,6 +415,15 @@ export default function BuilderClient() {
               </div>
               <div className="text-xs text-zinc-600">
                 {state.teachers.find((t) => t.id === overlay.teacherId)?.name ?? "?"}
+              </div>
+            </div>
+          ) : movingEntry ? (
+            <div className="rounded-xl border border-blue-500/20 bg-white px-3 py-2 shadow-lg">
+              <div className="text-sm font-medium">
+                {state.subjects.find((s) => s.id === movingEntry.subjectId)?.name ?? "?"}
+              </div>
+              <div className="text-xs text-zinc-600">
+                {state.teachers.find((t) => t.id === movingEntry.teacherId)?.name ?? "?"}
               </div>
             </div>
           ) : null}

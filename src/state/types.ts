@@ -60,6 +60,12 @@ export type AppState = {
   rules: RuleSettings;
 };
 
+export type AutoAllocateResult = {
+  placedCount: number;
+  remainingRequiredPeriods: number;
+  totalRequiredPeriods: number;
+};
+
 export type AppAction =
   | { type: "teacher.add"; teacher: Teacher }
   | { type: "teacher.update"; teacher: Teacher }
@@ -75,5 +81,6 @@ export type AppAction =
   | { type: "timeslots.set"; timeSlots: TimeSlot[] }
   | { type: "entry.place"; entry: Entry }
   | { type: "entry.clear"; gradeId: Id; day: Day; slotId: Id }
+  | { type: "allocation.auto"; gradeId?: Id }
   | { type: "state.import"; state: AppState };
 

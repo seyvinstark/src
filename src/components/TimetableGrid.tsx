@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import type { AppState, Day, Entry, Id, TimeSlot } from "@/state/types";
-import { Droppable } from "@/components/dnd";
+import { Draggable, Droppable } from "@/components/dnd";
 
 const days: Day[] = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -16,6 +16,7 @@ export function TimetableGrid({
   renderCell,
   droppableIdForCell,
   canDrop,
+  draggableEntryIdForCell,
 }: {
   state: AppState;
   mode: "grade-edit" | "teacher-readonly";
@@ -26,6 +27,7 @@ export function TimetableGrid({
   renderCell?: (args: { entry?: Entry; slot: TimeSlot }) => React.ReactNode;
   droppableIdForCell?: (args: { day: Day; slotId: Id }) => string;
   canDrop?: (args: { day: Day; slotId: Id; slot: TimeSlot; entry?: Entry }) => boolean;
+  draggableEntryIdForCell?: (args: { day: Day; slotId: Id; entry: Entry }) => string;
 }) {
   const slotsByDay = useMemo(() => {
     const map = new Map<Day, TimeSlot[]>();
@@ -96,12 +98,15 @@ export function TimetableGrid({
                 const entry = entryAt(day, slot.id);
                 const isLocked = slot.type !== "class";
                 const isHighlight = highlight?.day === day && highlight?.slotId === slot.id;
+                const isTeacherFilledClassCell = mode === "teacher-readonly" && slot.type === "class" && !!entry;
 
                 const base =
                   "border-b border-zinc-100 px-2 py-2 align-top";
                 const cellCls = isLocked
                   ? "bg-zinc-50 text-zinc-500"
-                  : "bg-white hover:bg-zinc-50";
+                  : isTeacherFilledClassCell
+                    ? "bg-blue-100/50 hover:bg-blue-100/60"
+                    : "bg-white hover:bg-zinc-50";
 
                 const ring = isHighlight ? " ring-2 ring-blue-500/30" : "";
 
@@ -120,7 +125,22 @@ export function TimetableGrid({
                           onClick={() => onCellClick?.({ day, slotId: slot.id, slot, entry })}
                           className="w-full text-left disabled:cursor-not-allowed"
                         >
-                          {renderCell ? (
+                          {entry && draggableEntryIdForCell ? (
+                            <Draggable id={draggableEntryIdForCell({ day, slotId: slot.id, entry })}>
+                              {renderCell ? (
+                                renderCell({ entry, slot })
+                              ) : (
+                                <div>
+                                  <div className="font-medium">
+                                    {state.subjects.find((s) => s.id === entry.subjectId)?.name ?? "?"}
+                                  </div>
+                                  <div className="text-xs text-zinc-600">
+                                    {state.teachers.find((t) => t.id === entry.teacherId)?.name ?? "?"}
+                                  </div>
+                                </div>
+                              )}
+                            </Draggable>
+                          ) : renderCell ? (
                             renderCell({ entry, slot })
                           ) : entry ? (
                             <div>
